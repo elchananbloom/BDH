@@ -1,0 +1,112 @@
+setwd('C:/Users/Aviel/Desktop/data/R-BigData')
+library("RSQLite")
+library("tidyverse")
+library("recommenderlab")
+library(stringr)
+
+books.db <- dbConnect(RSQLite::SQLite(), "BX-Books_hkv1.db")
+books3 = dbReadTable(books.db, "bx-books")
+books3$ISBN = str_to_lower(books3$ISBN)
+books3 = arrange(books3, desc(ISBN))
+books3$ISBN = str_replace(books3$ISBN, " ", "")
+books3$ISBN = str_replace_all(books3$ISBN, "[a-z]", "")
+books3$ISBN  = str_extract(books3$ISBN, "[0-9]{10}")
+books3 = books3[!is.na(books3$ISBN),]
+books3 = select(books3, ISBN:Book.Author)
+
+ratings.db <- dbConnect(RSQLite::SQLite(), "BX-Ratings_hkv1.db")
+ratings <- dbReadTable(ratings.db, "bx-book-ratings")
+ratings$ISBN = str_to_lower(ratings$ISBN)
+ratings = arrange(ratings, desc(ISBN))
+ratings$ISBN = str_replace(ratings$ISBN, " ", "")
+ratings$ISBN = str_replace_all(ratings$ISBN, "[a-z]", "")
+ratings$ISBN  = str_extract(ratings$ISBN, "[0-9]{10}")
+ratings = ratings[!is.na(ratings$ISBN),]
+ratings = filter(ratings, ratings$Book.Rating > 1)
+ratings = arrange(ratings, ratings$User.ID)
+
+
+users.db <- dbConnect(RSQLite::SQLite(), "BX-Users_hkv1.db")
+users <- dbReadTable(users.db, "bx-users")
+
+# To only save users that gived grades to more than N books and return in rating_test2
+
+N <- 20
+N2 <- 20
+user_ratings <- data.frame(table(ratings$User.ID)) # give frequence of ID_User
+grad_user = filter(user_ratings, Freq>=N ) # take only user that appears more of N
+grad_user = arrange(grad_user, desc(Freq)) # arrange with big freq at the beginning
+colnames(grad_user)= c("ID","Frequence")
+ratings= filter(ratings, User.ID %in% grad_user$ID)
+
+book_ratings <- data.frame(table(ratings$ISBN))
+num_book = filter(book_ratings, Freq>=N2 )
+colnames(num_book)= c("ISBN","Frequence")
+ratings= filter(ratings, ISBN %in% num_book$ISBN)
+
+
+
+#############################################################
+
+sparse_ratings = sparseMatrix(
+  i = ratings$User.ID,
+  j = as.integer(rownames(ratings)),
+  x = ratings$Book.Rating
+)
+
+true_user = unique(ratings$User.ID) # To get the true user 8-9-10-12 and no 1-2-3-4
+sparse_ratings = sparse_ratings[true_user,] # To get The sparse Matrix only with the true users
+rownames(sparse_ratings) = true_user # name the row of the sparse matrix
+
+dim_sparse_matrix = dim(sparse_ratings)
+sparse_ratings <- as(sparse_ratings, "realRatingMatrix") # to RealRatingMatrix
+colnames (sparse_ratings) <-paste (ratings$ISBN, sep = "") # give nameColumns to the sparse Matrix
+sparse_ratings_reco <- Recommender(sparse_ratings, method = "POPULAR") # According to number of users who have the item in their profile
+recom <- predict(sparse_ratings_reco, sparse_ratings[2], n=5) # Recommendations as ‘topNList’ with n = 5 for user number 8.
+as(recom, "list")
+
+recom <- predict(sparse_ratings_reco, sparse_ratings[1:5], type="ratingMatrix") # return Matrix with grade prediction for all missing values
+as(recom, "matrix")[,1:13]
+
+dim(sparse_ratings)
+model.eval <-evaluationScheme (sparse_ratings, method = "split", train = 0.8, given = 1, goodRating = 8)
+
+r1 = Recommender(getData(model.eval, "train"), "UBCF") # according to user
+r2 = Recommender(getData(model.eval, "train"), "IBCF") # according to items
+
+p1 <- predict(r1, getData(model.eval, "known"), type="ratings")
+p2 <- predict(r2, getData(model.eval, "known"), type="ratings")
+
+error <- rbind(UBCF = calcPredictionAccuracy(p1, getData(model.eval, "unknown")), IBCF = calcPredictionAccuracy(p2, getData(model.eval, "unknown")))
+
+
+
+
+#3a
+nb_users <- nrow(users[!duplicated(users$User.ID),])
+#3b
+nb_books <- nrow(books[!duplicated(books$ISBN),])
+#3c
+nb_ratings <- nrow(ratings[ratings$Book.Rating,])
+
+#3d
+N <- 50
+user_ratings <- data.frame(table(ratings$User.ID))
+grad_user = filter(user_ratings, Freq>=N )
+grad_user = arrange(grad_user, desc(Freq))
+colnames(grad_user)= c("ID","Frequence")
+
+filter(ratings, User.ID %in% grad_user$ID)
+
+
+#3e
+N2 <- 7
+book_ratings <- data.frame(table(ratings$ISBN))
+filter(book_ratings, Freq>=N2 )
+
+#3f
+arrange(book_ratings, desc(Freq))
+
+#3g
+arrange(user_ratings, desc(Freq))
+#order_df=df[order(df$Freq, decreasing = TRUE),]
